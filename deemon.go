@@ -4,6 +4,7 @@ import (
 	"fmt"
 	//d "github.com/sevlyar/go-daemon"
 	"bytes"
+	"flag"
 	"io/ioutil"
 	"log"
 	"os"
@@ -23,6 +24,20 @@ const (
 	DefaultMaxKillRetry = 10
 )
 
+type Config struct {
+	Pidfile string
+	Logfile string
+	Workdir string
+}
+
+var defaultConfig Config
+
+func init() {
+	flag.StringVar(&defaultConfig.Pidfile, "pidfile", "", "Location of the pidfile.")
+	flag.StringVar(&defaultConfig.Logfile, "logfile", "", "Location of the logfile.")
+	flag.StringVar(&defaultConfig.Workdir, "workdir", "", "Location of the working directory to change to.")
+}
+
 type StartFunc func() error
 type ReturnHandlerFunc func(error) error
 type SignalHandlerFunc func(os.Signal) error
@@ -30,9 +45,7 @@ type PanicHandlerFunc func(interface{}) error
 type ExitHandlerFunc func(*os.ProcessState) error
 
 type Context struct {
-	Logfile string
-	WorkDir string
-	Pidfile string
+	Config
 
 	UseWatchdog  bool
 	MaxKillRetry int
@@ -75,14 +88,13 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 	}
 
 	name := path.Base(os.Args[0])
-	lfname := name + ".log"
+
 	var ret *Context
 	ret = &Context{
+		Config:       defaultConfig,
 		rchild:       nil,
 		ptype:        ptype,
 		Name:         name,
-		Logfile:      lfname,
-		Pidfile:      name + ".pid",
 		MaxKillRetry: DefaultMaxKillRetry,
 		DefaultOnExit: func(state *os.ProcessState) error {
 			ret.Logf("onExit %s", state.String())
@@ -102,6 +114,14 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 		},
 		Start:   s,
 		MustRun: time.Second * 1,
+	}
+
+	if len(ret.Config.Pidfile) <= 0 {
+		ret.Config.Pidfile = name + ".pid"
+	}
+
+	if len(ret.Config.Logfile) <= 0 {
+		ret.Config.Logfile = name + ".log"
 	}
 
 	ret.OnExit = ret.DefaultOnExit
@@ -249,7 +269,7 @@ func (c *Context) restartAs(mark string) (err error) {
 	ne = append(ne, fmt.Sprintf("%s=%s", MARK_KEY, mark))
 
 	attr := &os.ProcAttr{
-		Dir: c.WorkDir,
+		Dir: c.Config.Workdir,
 		Env: ne,
 		Files: []*os.File{
 			os.Stdin,
@@ -292,7 +312,7 @@ func (c *Context) close() error {
 }
 
 func (c *Context) Launch() (err error) {
-	c.lf, err = os.OpenFile(c.Logfile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	c.lf, err = os.OpenFile(c.Config.Logfile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
@@ -331,7 +351,7 @@ func (c *Context) readPidfile() error {
 	c.rchild = nil
 	c.watchdog = nil
 
-	data, err := ioutil.ReadFile(c.Pidfile)
+	data, err := ioutil.ReadFile(c.Config.Pidfile)
 	if err != nil {
 		return nil
 	}
