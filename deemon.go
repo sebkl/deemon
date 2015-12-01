@@ -389,6 +389,10 @@ func (c *Context) kill(sig os.Signal) error {
 	for i := 0; i < c.MaxKillRetry; i++ {
 		c.readPidfile()
 
+		if c.IsDown() {
+			return nil
+		}
+
 		if c.watchdog != nil {
 			c.Logf("Sending %s to watchdog PID=%d", sig, c.watchdog.Pid)
 			c.watchdog.Signal(syscall.SIGTERM) // Never send the watchdog a kill
@@ -406,6 +410,10 @@ func (c *Context) kill(sig os.Signal) error {
 
 func (c *Context) IsRunning() bool {
 	return (c.rchild != nil && c.watchdog != nil)
+}
+
+func (c *Context) IsDown() bool {
+	return (c.rchild == nil && c.watchdog == nil)
 }
 
 func (c *Context) amITheChild() bool {
