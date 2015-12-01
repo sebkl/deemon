@@ -377,21 +377,27 @@ func (c *Context) readPidfile() error {
 	return nil
 }
 
+func (c *Context) Kill() error {
+	return c.kill(syscall.SIGKILL)
+}
+
 func (c *Context) Stop() error {
+	return c.kill(syscall.SIGTERM)
+}
+
+func (c *Context) kill(sig os.Signal) error {
 	for i := 0; i < c.MaxKillRetry; i++ {
 		c.readPidfile()
 
-		ptk := c.watchdog
-		if ptk == nil {
-			ptk = c.rchild
-
-			if ptk == nil {
-				return nil
-			}
+		if c.watchdog != nil {
+			c.Logf("Sending %s to watchdog PID=%d", sig, c.watchdog.Pid)
+			c.watchdog.Signal(syscall.SIGTERM) // Never send the watchdog a kill
 		}
 
-		c.Logf("Sending SIGTERM to PID=%d", ptk.Pid)
-		ptk.Signal(syscall.SIGTERM)
+		if c.rchild != nil {
+			c.Logf("Sending %s to child PID=%d", sig, c.rchild.Pid)
+			c.rchild.Signal(sig)
+		}
 		time.Sleep(time.Second * 1)
 	}
 
@@ -426,6 +432,7 @@ Targets:
 --------
 	start		Start the service.
 	stop		Stop the service.
+	kill		Kill the service.
 	status		Print if service is running.
 
 Flags:
@@ -444,6 +451,11 @@ func (c *Context) Command(cmd string) (err error) {
 			return
 		}
 		return c.Stop()
+	case "kill":
+		if !running {
+			return
+		}
+		return c.Kill()
 	case "start":
 		if !running || c.amITheChild() {
 			return c.Launch()
