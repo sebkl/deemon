@@ -198,7 +198,6 @@ func (c *Context) doChild() error {
 }
 
 func (c *Context) doWatchdog() (err error) {
-	c.Logf("doWatchdog")
 	proc, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		return
@@ -317,19 +316,18 @@ func (c *Context) Launch() (err error) {
 		return err
 	}
 
-	log.SetOutput(c.lf)
-
-	c.Logf("started")
-
 	/* route proc type */
 	switch c.ptype {
 	case MARK_CHILD:
+		log.SetOutput(c.lf)
 		err = c.doChild()
-		c.Logf("exiting: %s", err)
+		c.Logf("Exiting: %s", err)
 		os.Exit(0)
 	case MARK_WATCHDOG:
+		c.Logf("Starting. Writing logs to: '%s'", c.Logfile)
+		log.SetOutput(c.lf)
 		err = c.doWatchdog()
-		c.Logf("exiting: %s", err)
+		c.Logf("Exiting: %s", err)
 		os.Exit(0)
 	case MARK_STARTER:
 		return c.doStarter()
@@ -420,11 +418,26 @@ func Command(cmd string, s StartFunc, fs ...interface{}) (ctx *Context, err erro
 	return ctx, err
 }
 
+func PrintUsage() {
+	fmt.Fprintf(os.Stderr, `
+usage: %s [flags...] <target>
+
+Targets:
+--------
+	start		Start the service.
+	stop		Stop the service.
+	status		Print if service is running.
+
+Flags:
+------
+`, os.Args[0])
+	flag.PrintDefaults()
+}
+
 func (c *Context) Command(cmd string) (err error) {
 	c.readPidfile()
 	cm := strings.ToLower(cmd)
 	running := c.IsRunning()
-	c.Logf("command: %s", cmd)
 	switch cm {
 	case "stop":
 		if !running {
@@ -440,13 +453,14 @@ func (c *Context) Command(cmd string) (err error) {
 		}
 	case "status":
 		if running {
-			fmt.Printf("Service %s is running at PID=%d,%d\n", c.Name, c.watchdog.Pid, c.rchild.Pid)
+			c.Logf("Service %s is running at PID=%d,%d\n", c.Name, c.watchdog.Pid, c.rchild.Pid)
 
 			/* TODO: Send SIG INFO/STATUS to child process */
 			return nil
 		} else {
 			return c.Errorf("Service %s is not running", c.Name)
 		}
+		flag.PrintDefaults()
 	default:
 		return c.Errorf("unknown command: %s", cmd)
 	}
