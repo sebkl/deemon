@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -106,6 +107,7 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 		},
 		DefaultOnPanic: func(i interface{}) error {
 			ret.Logf("onPanic %s", i)
+			debug.PrintStack()
 			return nil
 		},
 		DefaultOnReturn: func(err error) error {
@@ -196,10 +198,6 @@ func (c *Context) doChild() error {
 				return c.Errorf("exiting due to error in 'onReturn' handler: '%s' by '%s'", err2, err)
 			}
 
-			delta := time.Now().Sub(laststart)
-			if delta < c.MustRun {
-				log.Fatalf("returned within %.3f seconds", delta.Seconds())
-			}
 		case sig := <-sc: // A Termination signal was catched
 			c.Logf("received signal: %d", sig)
 			err2 := c.OnSignal(sig)
@@ -212,6 +210,12 @@ func (c *Context) doChild() error {
 		if err != nil {
 			return c.Errorf("exiting due to error in 'onAny' handler: '%s'", err)
 		}
+
+		delta := time.Now().Sub(laststart)
+		if delta < c.MustRun {
+			log.Fatalf("returned within %.3f seconds. Assuming startup error. Aborted.", delta.Seconds())
+		}
+
 		c.Logf("restarting: %s %s", c.Name, c.ptype)
 	}
 	return nil
@@ -321,7 +325,7 @@ func (c *Context) doStarter() (err error) {
 		return
 	}
 
-	c.Logf("exit.")
+	c.Logf("Starter done. Please find logs at '%s'", c.Logfile)
 	return nil
 }
 
