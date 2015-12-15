@@ -38,11 +38,13 @@ func init() {
 	flag.StringVar(&defaultConfig.Workdir, "workdir", "", "Location of the working directory to change to.")
 }
 
+// The loop is only restarted if none of the Handler implementations return an error != nil.
 type StartFunc func() error
 type ReturnHandlerFunc func(error) error
 type SignalHandlerFunc func(os.Signal) error
 type PanicHandlerFunc func(interface{}) error
 type ExitHandlerFunc func(*os.ProcessState) error
+type AnyHandlerFunc func() error
 
 type Context struct {
 	Config
@@ -54,11 +56,13 @@ type Context struct {
 	OnPanic  PanicHandlerFunc
 	OnSignal SignalHandlerFunc
 	OnReturn ReturnHandlerFunc
+	OnAny    AnyHandlerFunc
 
 	DefaultOnExit   ExitHandlerFunc
 	DefaultOnPanic  PanicHandlerFunc
 	DefaultOnSignal SignalHandlerFunc
 	DefaultOnReturn ReturnHandlerFunc
+	DefaultOnAny    AnyHandlerFunc
 
 	Start StartFunc
 
@@ -110,6 +114,9 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 		},
 		DefaultOnSignal: func(sig os.Signal) error {
 			ret.Logf("onSignal %s", sig)
+			return ret.Errorf("exiting due to sig %s", sig)
+		},
+		DefaultOnAny: func() error {
 			return nil
 		},
 		Start:   s,
@@ -128,9 +135,9 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 	ret.OnPanic = ret.DefaultOnPanic
 	ret.OnReturn = ret.DefaultOnReturn
 	ret.OnSignal = ret.DefaultOnSignal
+	ret.OnAny = ret.DefaultOnAny
 
 	for _, m := range args {
-
 		if v, ok := m.(ReturnHandlerFunc); ok {
 			ret.Logf("registering ReturnHandler")
 			ret.OnReturn = v
@@ -149,6 +156,11 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 		if v, ok := m.(ExitHandlerFunc); ok {
 			ret.Logf("registering ExitHandler")
 			ret.OnExit = v
+		}
+
+		if v, ok := m.(AnyHandlerFunc); ok {
+			ret.Logf("registering AnyHandler")
+			ret.OnAny = v
 		}
 	}
 
@@ -188,11 +200,19 @@ func (c *Context) doChild() error {
 			if delta < c.MustRun {
 				log.Fatalf("returned within %.3f seconds", delta.Seconds())
 			}
-			c.Logf("restarting: %s %s", c.Name, c.ptype, err, err2)
 		case sig := <-sc: // A Termination signal was catched
 			c.Logf("received signal: %d", sig)
-			return c.OnSignal(sig)
+			err2 := c.OnSignal(sig)
+			if err2 != nil {
+				return c.Errorf("exiting due to error in 'onSignal' handler: '%s'", err2)
+			}
 		}
+
+		err := c.OnAny()
+		if err != nil {
+			return c.Errorf("exiting due to error in 'onAny' handler: '%s'", err)
+		}
+		c.Logf("restarting: %s %s", c.Name, c.ptype)
 	}
 	return nil
 }
