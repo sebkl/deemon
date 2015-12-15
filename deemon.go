@@ -191,22 +191,21 @@ func (c *Context) doChild() error {
 			c.Logf("starting Start() routine")
 			err = c.Start()
 		}()
+
+		var err error
 		select {
 		case err := <-ret: // START returned an error
-			err2 := c.OnReturn(err)
-			if err2 != nil {
-				return c.Errorf("exiting due to error in 'onReturn' handler: '%s' by '%s'", err2, err)
-			}
+			err = c.OnReturn(err)
 
 		case sig := <-sc: // A Termination signal was catched
-			c.Logf("received signal: %d", sig)
-			err2 := c.OnSignal(sig)
-			if err2 != nil {
-				return c.Errorf("exiting due to error in 'onSignal' handler: '%s'", err2)
-			}
+			err = c.OnSignal(sig)
 		}
 
-		err := c.OnAny()
+		if err != nil {
+			return c.Errorf("exiting due to error in 'onReturn/onSignal' handler: '%s'", err)
+		}
+
+		err = c.OnAny()
 		if err != nil {
 			return c.Errorf("exiting due to error in 'onAny' handler: '%s'", err)
 		}
