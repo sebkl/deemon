@@ -194,7 +194,7 @@ func (c *Context) doChild() error {
 
 		var err error
 		select {
-		case err := <-ret: // START returned an error
+		case err = <-ret: // START returned an error
 			err = c.OnReturn(err)
 
 		case sig := <-sc: // A Termination signal was catched
