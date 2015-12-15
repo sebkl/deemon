@@ -45,7 +45,7 @@ type ReturnHandlerFunc func(error) error
 type SignalHandlerFunc func(os.Signal) error
 type PanicHandlerFunc func(interface{}) error
 type ExitHandlerFunc func(*os.ProcessState) error
-type AnyHandlerFunc func() error
+type AnyHandlerFunc func(error) error
 
 type Context struct {
 	Config
@@ -118,8 +118,8 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 			ret.Logf("onSignal %s", sig)
 			return ret.Errorf("exiting due to sig %s", sig)
 		},
-		DefaultOnAny: func() error {
-			return nil
+		DefaultOnAny: func(err error) error {
+			return err
 		},
 		Start:   s,
 		MustRun: time.Second * 1,
@@ -200,14 +200,9 @@ func (c *Context) doChild() error {
 		case sig := <-sc: // A Termination signal was catched
 			err = c.OnSignal(sig)
 		}
-
+		err = c.OnAny(err)
 		if err != nil {
-			return c.Errorf("exiting due to error in 'onReturn/onSignal' handler: '%s'", err)
-		}
-
-		err = c.OnAny()
-		if err != nil {
-			return c.Errorf("exiting due to error in 'onAny' handler: '%s'", err)
+			return c.Errorf("exiting due to error in handler: '%s'", err)
 		}
 
 		delta := time.Now().Sub(laststart)
