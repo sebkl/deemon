@@ -2,6 +2,7 @@ package deemon
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 func TestAll(t *testing.T) {
 	ctx := NewContext(func() error {
 		for {
+			log.Printf("Tick")
 			time.Sleep(time.Second * 1)
 		}
 	}, ReturnHandlerFunc(func(err error) error {

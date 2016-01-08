@@ -77,6 +77,8 @@ type Context struct {
 	rchild   *os.Process
 	watchdog *os.Process
 	lf       *os.File
+
+	args []interface{}
 }
 
 func Launch(s StartFunc, args ...interface{}) (ctx *Context, err error) {
@@ -143,35 +145,39 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 	ret.OnSignal = ret.DefaultOnSignal
 	ret.OnAny = ret.DefaultOnAny
 
-	for _, m := range args {
-		if v, ok := m.(ReturnHandlerFunc); ok {
-			ret.Logf("registering ReturnHandler")
-			ret.OnReturn = v
-		}
-
-		if v, ok := m.(PanicHandlerFunc); ok {
-			ret.Logf("registering PanicHandler")
-			ret.OnPanic = v
-		}
-
-		if v, ok := m.(SignalHandlerFunc); ok {
-			ret.Logf("registering SignalHandler")
-			ret.OnSignal = v
-		}
-
-		if v, ok := m.(ExitHandlerFunc); ok {
-			ret.Logf("registering ExitHandler")
-			ret.OnExit = v
-		}
-
-		if v, ok := m.(AnyHandlerFunc); ok {
-			ret.Logf("registering AnyHandler")
-			ret.OnAny = v
-		}
-	}
+	ret.args = args // do the handler registration later.
 
 	ret.readPidfile()
 	return ret
+}
+
+func (c *Context) registerHandler() {
+	for _, m := range c.args {
+		if v, ok := m.(ReturnHandlerFunc); ok {
+			c.Logf("registering ReturnHandler")
+			c.OnReturn = v
+		}
+
+		if v, ok := m.(PanicHandlerFunc); ok {
+			c.Logf("registering PanicHandler")
+			c.OnPanic = v
+		}
+
+		if v, ok := m.(SignalHandlerFunc); ok {
+			c.Logf("registering SignalHandler")
+			c.OnSignal = v
+		}
+
+		if v, ok := m.(ExitHandlerFunc); ok {
+			c.Logf("registering ExitHandler")
+			c.OnExit = v
+		}
+
+		if v, ok := m.(AnyHandlerFunc); ok {
+			c.Logf("registering AnyHandler")
+			c.OnAny = v
+		}
+	}
 }
 
 func (c *Context) doChild() error {
@@ -243,6 +249,7 @@ func (c *Context) doWatchdog() (err error) {
 		}
 	}()
 
+	c.registerHandler()
 	for run {
 		laststart := time.Now()
 
@@ -366,7 +373,7 @@ func (c *Context) Launch() (err error) {
 		}
 		logwriter = c.lf
 	} else {
-		c.Logf("Disabling logfile wwriting.")
+		c.Logf("Disabling logfile writing.")
 	}
 
 	/* route proc type */
