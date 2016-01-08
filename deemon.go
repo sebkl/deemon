@@ -26,9 +26,11 @@ const (
 )
 
 type Config struct {
-	Pidfile string
-	Logfile string
-	Workdir string
+	Pidfile    string
+	Logfile    string
+	Workdir    string
+	Nolog      bool
+	Foreground bool
 }
 
 var defaultConfig Config
@@ -36,6 +38,8 @@ var defaultConfig Config
 func init() {
 	flag.StringVar(&defaultConfig.Pidfile, "pidfile", "", "Location of the pidfile.")
 	flag.StringVar(&defaultConfig.Logfile, "logfile", "", "Location of the logfile.")
+	flag.BoolVar(&defaultConfig.Nolog, "nolog", false, "Disable logging.")
+	flag.BoolVar(&defaultConfig.Foreground, "fg", false, "Run service in foreground for testing purposes.")
 	flag.StringVar(&defaultConfig.Workdir, "workdir", "", "Location of the working directory to change to.")
 }
 
@@ -200,6 +204,8 @@ func (c *Context) doChild() error {
 		case sig := <-sc: // A Termination signal was catched
 			err = c.OnSignal(sig)
 		}
+
+		defer c.close()
 		err = c.OnAny(err)
 		if err != nil {
 			return c.Errorf("exiting due to error in handler: '%s'", err)
@@ -245,7 +251,7 @@ func (c *Context) doWatchdog() (err error) {
 			return
 		}
 
-		err = ioutil.WriteFile(c.Pidfile, []byte(fmt.Sprintf("%d\n%d", c.rchild.Pid, os.Getpid())), 0644)
+		err = c.writePidfile()
 		if err != nil {
 			return
 		}
@@ -272,6 +278,28 @@ func (c *Context) doWatchdog() (err error) {
 		}
 	}
 	return nil
+}
+
+func (c *Context) writePidfile() (err error) {
+	pids := make([]int, 2)
+	if c.rchild != nil {
+		pids[0] = c.rchild.Pid
+	}
+
+	if c.watchdog != nil {
+		pids[1] = c.watchdog.Pid
+	}
+
+	if c.watchdog == nil && c.rchild == nil {
+		_, err = os.Stat(c.Pidfile)
+		if err != nil {
+			return nil // file does not exist
+		} else {
+			c.Logf("Removing pidfile '%s'", c.Pidfile)
+			return os.Remove(c.Pidfile)
+		}
+	}
+	return ioutil.WriteFile(c.Pidfile, []byte(fmt.Sprintf("%d\n%d", pids[0], pids[1])), 0644)
 }
 
 func (c *Context) restartAs(mark string) (err error) {
@@ -329,21 +357,25 @@ func (c *Context) close() error {
 }
 
 func (c *Context) Launch() (err error) {
-	c.lf, err = os.OpenFile(c.Config.Logfile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
-	if err != nil {
-		return err
+	//Setup final logging.
+	logwriter := ioutil.Discard
+	if !c.Config.Nolog {
+		c.lf, err = os.OpenFile(c.Config.Logfile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+		if err != nil {
+			return err
+		}
 	}
 
 	/* route proc type */
 	switch c.ptype {
 	case MARK_CHILD:
-		log.SetOutput(c.lf)
+		log.SetOutput(logwriter)
 		err = c.doChild()
 		c.Logf("Exiting: %s", err)
 		os.Exit(0)
 	case MARK_WATCHDOG:
 		c.Logf("Starting. Writing logs to: '%s'", c.Logfile)
-		log.SetOutput(c.lf)
+		log.SetOutput(logwriter)
 		err = c.doWatchdog()
 		c.Logf("Exiting: %s", err)
 		os.Exit(0)
@@ -366,6 +398,7 @@ func (c *Context) Errorf(pat string, args ...interface{}) error {
 func (c *Context) readPidfile() error {
 	c.rchild = nil
 	c.watchdog = nil
+	writepf := false
 
 	data, err := ioutil.ReadFile(c.Config.Pidfile)
 	if err != nil {
@@ -374,13 +407,14 @@ func (c *Context) readPidfile() error {
 
 	sb := bytes.Split(data, []byte{'\n'})
 	if len(sb) >= 1 {
-		cpid, err := strconv.Atoi(string(sb[0]))
-		if err != nil {
-			return err
+		if cpid, err := strconv.Atoi(string(sb[0])); err == nil {
+			proc, err := os.FindProcess(cpid)
+			if err == nil {
+				c.rchild = proc
+			} else {
+				writepf = true
+			}
 		}
-
-		proc, _ := os.FindProcess(cpid)
-		c.rchild = proc
 	}
 
 	if len(sb) >= 2 {
@@ -388,10 +422,17 @@ func (c *Context) readPidfile() error {
 		if err != nil {
 			return err
 		}
-		proc, _ := os.FindProcess(wdpid)
-		c.watchdog = proc
+		proc, err := os.FindProcess(wdpid)
+		if err == nil {
+			c.watchdog = proc
+		} else {
+			writepf = true
+		}
 	}
 
+	if writepf {
+		return c.writePidfile()
+	}
 	return nil
 }
 
@@ -476,7 +517,13 @@ func (c *Context) Command(cmd string) (err error) {
 		if !running {
 			return
 		}
-		return c.Stop()
+		err = c.Stop()
+		if err != nil {
+			return c.Errorf("Could not stop service. Try kill command: %s", err)
+		} else {
+			c.Logf("Service stopped.")
+		}
+		return err
 	case "kill":
 		if !running {
 			return
@@ -484,10 +531,15 @@ func (c *Context) Command(cmd string) (err error) {
 		return c.Kill()
 	case "start":
 		if !running || c.amITheChild() {
-			return c.Launch()
+			if c.Foreground {
+				c.Logf("Running in foreground mode. All Error-Handlers disabled.")
+				return c.Start()
+			} else {
+				return c.Launch()
+			}
 		} else {
 			c.Logf("Already Running")
-			return c.Errorf("Service already running.")
+			return c.Errorf("Service already running (%d,%d).", c.watchdog.Pid, c.rchild.Pid)
 		}
 	case "status":
 		if running {
