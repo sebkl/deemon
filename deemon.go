@@ -364,6 +364,9 @@ func (c *Context) Launch() (err error) {
 		if err != nil {
 			return err
 		}
+		logwriter = c.lf
+	} else {
+		c.Logf("Disabling logfile wwriting.")
 	}
 
 	/* route proc type */
