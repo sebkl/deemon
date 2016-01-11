@@ -4,7 +4,9 @@ import (
 	"fmt"
 	//d "github.com/sevlyar/go-daemon"
 	"bytes"
+	"compress/gzip"
 	"flag"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -31,6 +33,7 @@ type Config struct {
 	Workdir    string
 	Nolog      bool
 	Foreground bool
+	RotateSize int
 }
 
 var defaultConfig Config
@@ -41,6 +44,7 @@ func init() {
 	flag.BoolVar(&defaultConfig.Nolog, "nolog", false, "Disable logging.")
 	flag.BoolVar(&defaultConfig.Foreground, "fg", false, "Run service in foreground for testing purposes.")
 	flag.StringVar(&defaultConfig.Workdir, "workdir", "", "Location of the working directory to change to.")
+	flag.IntVar(&defaultConfig.RotateSize, "rotate", 100, "Size of the logfile in MB when it will be rotated.")
 }
 
 // The loop is only restarted if none of the Handler implementations return an error != nil.
@@ -376,6 +380,21 @@ func (c *Context) Launch() (err error) {
 		c.Logf("Disabling logfile writing.")
 	}
 
+	//Start the logrotation routine.
+	go func() {
+		for {
+			time.Sleep(1 * time.Second)
+			info, err := os.Stat(c.Logfile)
+			if err == nil {
+				if info.Size() > (int64(c.RotateSize) << 20) { //Rotate size is in MB
+					go c.rotate()
+				}
+			} else {
+				c.Logf("Could not stat logfile: %s", err)
+			}
+		}
+	}()
+
 	/* route proc type */
 	switch c.ptype {
 	case MARK_CHILD:
@@ -516,6 +535,46 @@ Flags:
 ------
 `, os.Args[0])
 	flag.PrintDefaults()
+}
+
+//rotate compresses the content of the current logfile to a new or existing file. The old file
+// is truncated afterwards.
+func (c *Context) rotate() (err error) {
+	c.Logf("Rotating logfile")
+	in, err := os.Open(c.Logfile)
+	if err != nil {
+		return
+	}
+	defer in.Close()
+
+	bn := fmt.Sprintf("%s.1.gz", c.Logfile)
+
+	os.Remove(bn)
+
+	out, err := os.Create(bn)
+	if err != nil {
+		return
+	}
+	defer out.Close()
+
+	gout := gzip.NewWriter(out)
+	defer gout.Close()
+
+	if _, err = io.Copy(gout, in); err != nil {
+		return
+	}
+	err = out.Sync()
+	if err != nil {
+		return
+	}
+
+	err = os.Truncate(c.Logfile, 0)
+	if err != nil {
+		return
+	}
+
+	c.Logf("Logfile rotation completed successfully.")
+	return nil
 }
 
 func (c *Context) Command(cmd string) (err error) {
