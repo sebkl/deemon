@@ -192,6 +192,7 @@ func (c *Context) doChild() error {
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGKILL, syscall.SIGTERM, syscall.SIGABRT)
 
+	c.registerHandler()
 	for run {
 		laststart := time.Now()
 		go func() {
@@ -244,12 +245,14 @@ func (c *Context) doWatchdog() (err error) {
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGKILL, syscall.SIGTERM, syscall.SIGABRT)
 	go func() {
-		sig := <-sc
-		c.Logf("received signal %d", sig)
-		run = false
-		if c.rchild != nil {
-			c.Logf("pass signal %d to PID=%d", sig, c.rchild.Pid)
-			c.rchild.Signal(sig) //  Pass the same signal to the child
+		for {
+			sig := <-sc
+			c.Logf("received signal %d", sig)
+			run = false
+			if c.rchild != nil {
+				c.Logf("pass signal %d to PID=%d", sig, c.rchild.Pid)
+				c.rchild.Signal(sig) //  Pass the same signal to the child
+			}
 		}
 	}()
 
@@ -286,6 +289,8 @@ func (c *Context) doWatchdog() (err error) {
 
 		if run {
 			c.Logf("restarting child")
+		} else {
+			c.Logf("exiting")
 		}
 	}
 	return nil
@@ -486,11 +491,13 @@ func (c *Context) kill(sig os.Signal) error {
 			c.watchdog.Signal(syscall.SIGTERM) // Never send the watchdog a kill
 		}
 
+		time.Sleep(time.Second * 1)
+		c.readPidfile()
+
 		if c.rchild != nil {
 			c.Logf("Sending %s to child PID=%d", sig, c.rchild.Pid)
 			c.rchild.Signal(sig)
 		}
-		time.Sleep(time.Second * 1)
 	}
 
 	return c.Errorf("Could not stop process '%s' after %d retries.", c.Name, c.MaxKillRetry)
