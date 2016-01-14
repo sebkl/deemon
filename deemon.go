@@ -156,6 +156,7 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 }
 
 func (c *Context) registerHandler() {
+	c.Logf("registering %d handler:", len(c.args))
 	for _, m := range c.args {
 		if v, ok := m.(ReturnHandlerFunc); ok {
 			c.Logf("registering ReturnHandler")
