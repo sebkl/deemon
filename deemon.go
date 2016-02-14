@@ -1,11 +1,10 @@
 package deemon
 
 import (
-	"fmt"
-	//d "github.com/sevlyar/go-daemon"
 	"bytes"
 	"compress/gzip"
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -54,6 +53,7 @@ type SignalHandlerFunc func(os.Signal) error
 type PanicHandlerFunc func(interface{}) error
 type ExitHandlerFunc func(*os.ProcessState) error
 type AnyHandlerFunc func(error) error
+type StatusHandlerFunc func() string
 
 type Context struct {
 	Config
@@ -66,12 +66,14 @@ type Context struct {
 	OnSignal SignalHandlerFunc
 	OnReturn ReturnHandlerFunc
 	OnAny    AnyHandlerFunc
+	OnStatus StatusHandlerFunc
 
 	DefaultOnExit   ExitHandlerFunc
 	DefaultOnPanic  PanicHandlerFunc
 	DefaultOnSignal SignalHandlerFunc
 	DefaultOnReturn ReturnHandlerFunc
 	DefaultOnAny    AnyHandlerFunc
+	DefaultOnStatus StatusHandlerFunc
 
 	Start StartFunc
 
@@ -96,7 +98,7 @@ func Launch(s StartFunc, args ...interface{}) (ctx *Context, err error) {
 
 func NewContext(s StartFunc, args ...interface{}) *Context {
 
-	//determin which kind of proc this is.
+	//determine which kind of proc this is.
 	ptype := os.Getenv(MARK_KEY)
 	if len(ptype) == 0 {
 		ptype = MARK_STARTER
@@ -131,6 +133,10 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 		DefaultOnAny: func(err error) error {
 			return err
 		},
+		DefaultOnStatus: func() (ret string) {
+			return "onStatus: alive"
+		},
+
 		Start:   s,
 		MustRun: time.Second * 1,
 	}
@@ -148,6 +154,7 @@ func NewContext(s StartFunc, args ...interface{}) *Context {
 	ret.OnReturn = ret.DefaultOnReturn
 	ret.OnSignal = ret.DefaultOnSignal
 	ret.OnAny = ret.DefaultOnAny
+	ret.OnStatus = ret.DefaultOnStatus
 
 	ret.args = args // do the handler registration later.
 
@@ -191,7 +198,7 @@ func (c *Context) doChild() error {
 
 	run := true
 	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGKILL, syscall.SIGTERM, syscall.SIGABRT)
+	signal.Notify(sc, syscall.SIGKILL, syscall.SIGTERM, syscall.SIGABRT, syscall.SIGINFO)
 
 	c.registerHandler()
 	for run {
@@ -214,6 +221,11 @@ func (c *Context) doChild() error {
 			err = c.OnReturn(err)
 
 		case sig := <-sc: // A Termination signal was catched
+			if sig == syscall.SIGINFO {
+				mes := c.OnStatus()
+				c.Logf(mes)
+			}
+
 			err = c.OnSignal(sig)
 		}
 
@@ -620,9 +632,10 @@ func (c *Context) Command(cmd string) (err error) {
 		}
 	case "status":
 		if running {
-			c.Logf("Service %s is running at PID=%d,%d\n", c.Name, c.watchdog.Pid, c.rchild.Pid)
-
-			/* TODO: Send SIG INFO/STATUS to child process */
+			c.Logf("Service %s is running at PID=%d,%d. Sending SIGINFO.\n", c.Name, c.watchdog.Pid, c.rchild.Pid)
+			c.rchild.Signal(syscall.SIGINFO)
+			//TODO: communicate status information via FIFO or Shared Memory or pipe ....
+			// Write additional log function to write messagess to both logfile and pipe/memory etc.
 			return nil
 		} else {
 			return c.Errorf("Service %s is not running", c.Name)
