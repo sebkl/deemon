@@ -24,6 +24,8 @@ const (
 	MARK_WATCHDOG       = "WATCHDOG"
 	MARK_STARTER        = "STARTER"
 	DefaultMaxKillRetry = 10
+	//TODO: make this one portable. BSD it is SIGINFO under linux SIGQUIT is considerable.
+	INFOSIGNAL = syscall.SIGQUIT
 )
 
 type Config struct {
@@ -198,7 +200,7 @@ func (c *Context) doChild() error {
 
 	run := true
 	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGKILL, syscall.SIGTERM, syscall.SIGABRT, syscall.SIGINFO)
+	signal.Notify(sc, syscall.SIGKILL, syscall.SIGTERM, syscall.SIGABRT, INFOSIGNAL)
 
 	c.registerHandler()
 	for run {
@@ -221,7 +223,7 @@ func (c *Context) doChild() error {
 			err = c.OnReturn(err)
 
 		case sig := <-sc: // A Termination signal was catched
-			if sig == syscall.SIGINFO {
+			if sig == INFOSIGNAL {
 				mes := c.OnStatus()
 				c.Logf(mes)
 			}
@@ -632,8 +634,8 @@ func (c *Context) Command(cmd string) (err error) {
 		}
 	case "status":
 		if running {
-			c.Logf("Service %s is running at PID=%d,%d. Sending SIGINFO.\n", c.Name, c.watchdog.Pid, c.rchild.Pid)
-			c.rchild.Signal(syscall.SIGINFO)
+			c.Logf("Service %s is running at PID=%d,%d. Sending %s.\n", c.Name, c.watchdog.Pid, c.rchild.Pid, INFOSIGNAL)
+			c.rchild.Signal(INFOSIGNAL)
 			//TODO: communicate status information via FIFO or Shared Memory or pipe ....
 			// Write additional log function to write messagess to both logfile and pipe/memory etc.
 			return nil
