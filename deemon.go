@@ -1,5 +1,7 @@
 package deemon
 
+//TODO: use flagconf instead of flag
+
 import (
 	"bytes"
 	"compress/gzip"
@@ -540,6 +542,20 @@ func Command(cmd string, s StartFunc, fs ...interface{}) (ctx *Context, err erro
 	}
 	err = ctx.Command(cmd)
 	return ctx, err
+}
+
+// Main is a convenience function to be called directly from the main function.
+// It assumes the command as the first argument.pa
+func Main(s StartFunc, fs ...interface{}) {
+	flag.Parse()
+	args := flag.Args()
+	if len(args) < 1 {
+		PrintUsage()
+	} else {
+		if _, err := Command(args[0], s, fs...); err != nil {
+			log.Fatal(err)
+		}
+	}
 }
 
 func PrintUsage() {
